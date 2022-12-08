@@ -1,0 +1,22 @@
+[package]
+name = "proxy"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aead = "0.5.1"
+anyhow = "1.0.66"
+chacha20poly1305 = "0.10.1"
+elliptic-curve = { version = "0.12.3", features = ["ecdh", "pkcs8", "pem", "std"] }
+env_logger = "0.10.0"
+lazy_static = "1.4.0"
+log = "0.4.17"
+p256 = { version = "0.11.1", features = ["pkcs8", "ecdh", "pem", "std"] }
+paw = "1.0.0"
+rand = "0.8.5"
+sha2 = "0.10.6"
+structopt = { version = "0.3.26", features = ["paw"] }
+tokio = { version = "1.23.0", features = ["net", "rt", "macros", "rt-multi-thread", "io-std", "io-util", "sync"] }
+uuid = { version = "1.2.2", features = ["v4"] }

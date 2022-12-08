@@ -1,0 +1,7 @@
+/target
+/users/*.pem
+*.pem
+/report/*
+!/report/.latexmkrc
+!/report/report.tex
+!/report/report.pdf
