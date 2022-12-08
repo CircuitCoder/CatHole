@@ -21,6 +21,7 @@ pub async fn encrypted_send(client: &mut OwnedWriteHalf, cipher: ChaCha20Poly130
 
     assert!(buf.len() == 16 + 8);
 
+    log::debug!("Sending length = {}, self = {}", tot_len, buf.len());
     client.write_all(len_nonce.as_slice()).await?;
     client.write_all(buf.as_slice()).await?;
 
@@ -29,7 +30,9 @@ pub async fn encrypted_send(client: &mut OwnedWriteHalf, cipher: ChaCha20Poly130
     buf.write_all(&GARBAGE[0..padding_len.min(2048)]).await?;
     cipher.encrypt_in_place(&data_nonce, b"", &mut buf).map_err(|e| anyhow::anyhow!("Unable to encrypt data in place: {:?}", e))?;
 
-    assert!(tot_len == 16 + 8);
+    assert!(buf.len() == tot_len + 16);
+
+    log::debug!("Sending data, length = {}", buf.len());
 
     client.write_all(data_nonce.as_slice()).await?;
     client.write_all(buf.as_slice()).await?;
@@ -46,14 +49,18 @@ pub async fn encrypted_recv(client: &mut OwnedReadHalf, cipher: ChaCha20Poly1305
     assert!(len_dec.len() == 8);
     let len = u64::from_ne_bytes(len_dec.as_slice().try_into().unwrap()) as usize;
 
+    log::debug!("Got length = {}", len);
+
     let mut data = vec![0u8; 12 + 16 + len];
     client.read_exact(&mut data).await?;
-    let (nonce, tag_data) = nonce_tag_len.split_at(12);
+    let (nonce, tag_data) = data.split_at(12);
     let data = cipher.decrypt(nonce.into(), tag_data).map_err(|e| anyhow::anyhow!("Unable to decrypt data: {}", e))?;
+    log::debug!("Got data, real length = {}", data.len());
+
     Ok(data)
 }
 
-pub async fn setup_connection(remote: TcpStream, key: p256::ecdsa::SigningKey) -> anyhow::Result<(OwnedReadHalf, OwnedWriteHalf, ChaCha20Poly1305, [u8; 32], Vec<u8>)> {
+pub async fn setup_connection(remote: TcpStream, key: p256::ecdsa::SigningKey) -> anyhow::Result<(OwnedReadHalf, OwnedWriteHalf, ChaCha20Poly1305, p256::ecdsa::Signature, Vec<u8>)> {
     remote.set_nodelay(true)?;
 
     let (mut remote_read, mut remote_write) = remote.into_split();
@@ -67,7 +74,7 @@ pub async fn setup_connection(remote: TcpStream, key: p256::ecdsa::SigningKey) -
     let ecdhe_public: &[u8] = ecdhe_public.as_ref();
 
     let ecdhe_public_sig = key.sign(ecdhe_public);
-    assert!(ecdhe_public_sig.as_bytes().len() == 32);
+    assert!(ecdhe_public_sig.as_bytes().len() == 64);
 
     remote_write.write_all(ecdhe_public).await?;
     let mut ecdhe_remote_buffer = vec![0u8; ecdhe_public.len()];
@@ -91,7 +98,7 @@ pub async fn setup_connection(remote: TcpStream, key: p256::ecdsa::SigningKey) -
         remote_read,
         remote_write,
         session_cipher,
-        ecdhe_public_sig.as_bytes().try_into().unwrap(),
+        ecdhe_public_sig,
         ecdhe_remote_buffer
     ))
 }

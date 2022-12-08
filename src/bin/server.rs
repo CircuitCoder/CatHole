@@ -1,4 +1,4 @@
-use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr, Ipv6Addr, SocketAddrV6}, path::PathBuf, sync::Mutex, collections::HashMap, ffi::OsStr};
+use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr, Ipv6Addr, SocketAddrV6}, path::PathBuf, sync::Mutex, collections::HashMap, ffi::OsStr, str::FromStr};
 use chacha20poly1305::ChaCha20Poly1305;
 use proxy::{encrypted_send, encrypted_recv, setup_connection};
 use structopt::StructOpt;
@@ -21,7 +21,7 @@ struct Args {
     key: PathBuf,
 
     /// Path containing all user credentials
-    #[structopt(short, long)]
+    #[structopt(short, long, default_value = "users")]
     users: PathBuf,
 }
 
@@ -101,7 +101,8 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
         ecdhe_remote_buffer,
     ) = setup_connection(client, sign_key).await?;
 
-    encrypted_send(&mut client_write, session_cipher.clone(), ecdhe_public_sig.as_slice(), 0).await?;
+    log::debug!("Sending sig: {}", ecdhe_public_sig);
+    encrypted_send(&mut client_write, session_cipher.clone(), ecdhe_public_sig.as_bytes(), 0).await?;
     let resp = encrypted_recv(&mut client_read, session_cipher.clone()).await?;
 
     if resp.len() < 34 {
@@ -121,7 +122,7 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
         return Err(anyhow::anyhow!("Invalid address type: {:x}", addr_type));
     }
 
-    if (addr_type_ip == 0 && resp_rest.len() < 4 + 2 + 16 + 32) || (addr_type_ip == 1 && resp_rest.len() < 16 + 2 + 16 + 32) {
+    if (addr_type_ip == 0 && resp_rest.len() < 4 + 2 + 16 + 64) || (addr_type_ip == 1 && resp_rest.len() < 16 + 2 + 16 + 64) {
         return Err(anyhow::anyhow!("Invalid handshake length: {}", resp.len()));
     }
 
@@ -140,7 +141,7 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
     };
 
     let uid = &resp_rest[0..16];
-    let sig = &resp_rest[16..48];
+    let sig = &resp_rest[16..80];
 
     let uid = uuid::Uuid::from_bytes(uid.try_into().unwrap());
     {
@@ -158,6 +159,7 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
 
     // Create internal id
     // TODO: support UDP
+    log::info!("Connecting upstream {}...", addr);
     let external_socket = TcpStream::connect(addr).await?;
     let (external_read, external_write) = external_socket.into_split();
 
@@ -171,6 +173,7 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
     };
 
     store_lock.conns.insert(internal_id, conn);
+    log::info!("Handshake complete. Internal ID = {}", internal_id);
 
     let external_read_cipher = session_cipher.clone();
     let external_read_id = internal_id.clone();
@@ -214,7 +217,7 @@ async fn main(args: Args) -> anyhow::Result<()> {
 
         if let Some(inner) = path.file_stem().and_then(|e| e.to_str()).and_then(|e| uuid::Uuid::parse_str(e).ok()) {
             let key = std::fs::read_to_string(path)?;
-            let key = p256::PublicKey::from_sec1_bytes(key.as_bytes())?;
+            let key = p256::PublicKey::from_str(&key)?;
             USERS.lock().unwrap().insert(inner, key);
         } else {
             log::info!("Ignoring invalid filename: {}", path.display());

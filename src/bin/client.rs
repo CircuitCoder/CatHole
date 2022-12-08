@@ -1,4 +1,4 @@
-use std::{path::PathBuf, net::SocketAddr};
+use std::{path::PathBuf, net::SocketAddr, str::FromStr};
 
 use p256::ecdsa::signature::{Signature, Verifier};
 use proxy::{setup_connection, encrypted_recv, encrypted_send};
@@ -22,7 +22,7 @@ struct Args {
     bind: SocketAddr,
 
     /// UDP instead of TCP (WIP)
-    #[structopt(short, long)]
+    #[structopt(long)]
     udp: bool,
 
     /// Path to load the private key
@@ -30,10 +30,10 @@ struct Args {
     key: PathBuf,
 
     /// Path to load the server public key
-    #[structopt(short, long, default_value = "pubkey.pem")]
+    #[structopt(short="p", long, default_value = "pubkey.pem")]
     server_key: PathBuf,
 
-    /// Path containing all user credentials
+    /// UID
     #[structopt(short, long)]
     uid: Uuid,
 }
@@ -47,7 +47,8 @@ async fn main(args: Args) -> anyhow::Result<()> {
     let key = p256::SecretKey::from_sec1_pem(&key)?;
 
     let sign_key = p256::ecdsa::SigningKey::from(key);
-    let server_key = p256::PublicKey::from_sec1_bytes(std::fs::read_to_string(&args.server_key)?.as_bytes())?;
+    let server_key = p256::PublicKey::from_str(&std::fs::read_to_string(&args.server_key)?)?;
+    log::info!("Keys loaded");
 
     let server = TcpStream::connect(args.server).await?;
 
@@ -63,9 +64,10 @@ async fn main(args: Args) -> anyhow::Result<()> {
     if resp.len() < 32 {
         log::error!("Server returning invalid signature size: {}", resp.len());
     }
-    let sig = &resp[..32];
+    let sig = &resp[..64];
     let sig = p256::ecdsa::Signature::from_bytes(sig)?;
     let verifier = p256::ecdsa::VerifyingKey::from(server_key);
+    log::debug!("Got sig: {}", sig);
     verifier.verify(&ecdhe_remote_buffer, &sig)?;
 
     // Server verified, serializing request
@@ -93,10 +95,12 @@ async fn main(args: Args) -> anyhow::Result<()> {
         }
     }
     // BE = NE?
-    buf.write_u16(args.remote.port()).await?;
+    buf.write_all(&args.remote.port().to_ne_bytes()).await?;
     buf.write_all(args.uid.as_bytes()).await?;
-    buf.write_all(ecdhe_public_sig.as_slice()).await?;
+    buf.write_all(ecdhe_public_sig.as_bytes()).await?;
     proxy::encrypted_send(&mut server_write, session_cipher.clone(), buf.as_slice(), 0).await?;
+
+    log::info!("Upstream connection established. Binding {}...", args.bind);
 
     let sock = if args.bind.is_ipv4() {
         TcpSocket::new_v4()?
