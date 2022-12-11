@@ -5,3 +5,5 @@
 !/report/.latexmkrc
 !/report/report.tex
 !/report/report.pdf
+!/report/*.jpg
+!/report/*.txt

@@ -1,0 +1,81 @@
+➜  ~ curl --resolve google.com:443:127.0.0.1 https://google.com -v
+* Added google.com:443:127.0.0.1 to DNS cache
+* Hostname google.com was found in DNS cache
+*   Trying 127.0.0.1:443...
+* Connected to google.com (127.0.0.1) port 443 (#0)
+* ALPN: offers h2
+* ALPN: offers http/1.1
+*  CAfile: /etc/ssl/certs/ca-certificates.crt
+*  CApath: none
+* TLSv1.0 (OUT), TLS header, Certificate Status (22):
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+* TLSv1.2 (IN), TLS header, Certificate Status (22):
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+* TLSv1.2 (IN), TLS header, Finished (20):
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+* TLSv1.3 (IN), TLS handshake, Encrypted Extensions (8):
+* TLSv1.3 (IN), TLS handshake, Certificate (11):
+* TLSv1.3 (IN), TLS handshake, CERT verify (15):
+* TLSv1.3 (IN), TLS handshake, Finished (20):
+* TLSv1.2 (OUT), TLS header, Finished (20):
+* TLSv1.3 (OUT), TLS change cipher, Change cipher spec (1):
+* TLSv1.2 (OUT), TLS header, Supplemental data (23):
+* TLSv1.3 (OUT), TLS handshake, Finished (20):
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: CN=*.google.com
+*  start date: Nov  7 08:17:21 2022 GMT
+*  expire date: Jan 30 08:17:20 2023 GMT
+*  subjectAltName: host "google.com" matched cert's "google.com"
+*  issuer: C=US; O=Google Trust Services LLC; CN=GTS CA 1C3
+*  SSL certificate verify ok.
+* Using HTTP2, server supports multiplexing
+* Copying HTTP/2 data in stream buffer to connection buffer after upgrade: len=0
+* TLSv1.2 (OUT), TLS header, Supplemental data (23):
+* TLSv1.2 (OUT), TLS header, Supplemental data (23):
+* TLSv1.2 (OUT), TLS header, Supplemental data (23):
+* h2h3 [:method: GET]
+* h2h3 [:path: /]
+* h2h3 [:scheme: https]
+* h2h3 [:authority: google.com]
+* h2h3 [user-agent: curl/7.86.0]
+* h2h3 [accept: */*]
+* Using Stream ID: 1 (easy handle 0x5593b6316e60)
+* TLSv1.2 (OUT), TLS header, Supplemental data (23):
+> GET / HTTP/2
+> Host: google.com
+> user-agent: curl/7.86.0
+> accept: */*
+>
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* old SSL session ID is stale, removing
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+* TLSv1.2 (OUT), TLS header, Supplemental data (23):
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+< HTTP/2 301
+< location: https://www.google.com/
+< content-type: text/html; charset=UTF-8
+< cross-origin-opener-policy-report-only: same-origin-allow-popups; report-to="gws"
+< report-to: {"group":"gws","max_age":2592000,"endpoints":[{"url":"https://csp.withgoogle.com/csp/report-to/gws/other"}]}
+< date: Sun, 11 Dec 2022 15:17:37 GMT
+< expires: Tue, 10 Jan 2023 15:17:37 GMT
+< cache-control: public, max-age=2592000
+< server: gws
+< content-length: 220
+< x-xss-protection: 0
+< x-frame-options: SAMEORIGIN
+< alt-svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000,h3-Q050=":443"; ma=2592000,h3-Q046=":443"; ma=2592000,h3-Q043=":443"; ma=2592000,quic=":443"; ma=2592000; v="46,43"
+<
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">
+<TITLE>301 Moved</TITLE></HEAD><BODY>
+<H1>301 Moved</H1>
+The document has moved
+<A HREF="https://www.google.com/">here</A>.
+</BODY></HTML>
+* TLSv1.2 (IN), TLS header, Supplemental data (23):
+* Connection #0 to host google.com left intact

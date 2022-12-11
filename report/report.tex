@@ -80,21 +80,20 @@
 
   首先，双方持有以下内容：
   
-  服务器：拥有一个 Ed25519 公钥密钥对。客户端持有公钥。这是用来验证服务器的。\textbf{攻击者允许持有公钥}
+  服务器：拥有一个 ECDSA (NIST P256) 公钥密钥对。客户端持有公钥。这是用来验证服务器的。\textbf{攻击者允许持有公钥}
 
-  对于每个用户，拥有一个 UID <-> 密码对。UID 是 UUID (32 bytes)，密码应为 Ed25519 公密钥对。服务器持有公钥，客户端持有公密钥。
+  对于每个用户，拥有一个 UID <-> 密码对。UID 是 UUID (32 bytes)，密码应为 ECDSA (NIST P256) 公密钥对。服务器持有公钥，客户端持有公密钥。
 
   \subsection{握手}
 
-  双向 TCP 建立完成后，首先传递的消息永远是 ECDHE 握手。ECDHE 协商出的密钥作为本次链接的 Session key，并一直用到连接结束。
+  双向 TCP 建立完成后，首先传递的消息永远是 ECDHE (也是 NIST P256) 握手。ECDHE 协商出的密钥作为本次链接的 Session key，并一直用到连接结束。
   
   之后传递的任意消息都使用 Session key 加密，Cipher 使用 chacha20poly1305\footnote{流密码可以省去 Padding}，并可以认为是在 TCP 流之上的 Datagram 协议\footnote{使用 TCP 是为了方便保证 Datagram 大小没有限制，并且不用考虑重排}，具有以下格式：
 
   \begin{verbatim}
-| Nonce (12 bytes) | Msg Length (uint32_t, 4 bytes) | Counter (uint64_t, 8 bytes) |  Message ... |
+| Length Nonce (12 bytes) | Length + Tag (uint32_t, 4 + 16 bytes) | Message Nonce (12 bytes) |  Message + Tag ... |
   \end{verbatim}
 
-  其中 Counter 每个方向上每条消息自增 1，用来防止重放。不考虑 Counter 溢出的问题。
   \begin{itemize}
     \item Msg Length = 0 时，这是一个控制包，Message 部分包含一个 uint64\_t。
     \begin{itemize}
@@ -103,6 +102,8 @@
     \end{itemize}
     \item Msg Length > 0 是，这是正常的握手或者数据包。
   \end{itemize} 
+
+  为了防止重放，对 Nonce 添加 Bloom filter。
 
   剩余的握手消息包括：
 
@@ -149,4 +150,33 @@
   \subsection{直接使用 PSK}
 
   一个简单的设计是单向握手，用户直接使用 PSK AEAD 加密自己的握手包，这样可以省去 Challenge 过程，直接使用 AEAD 进行用户验证。缺点是要不握手包共享 PSK，要不服务器需要对于所有用户的 PSK 依次尝试解码握手包。当用户量比较大的时候，可能成为被 DoS 的缺陷。
+
+  \section{运行结果}
+
+  将服务器放置在公网上，Log 见附录 \ref{result:google}。当给出错误的客户端密钥时，Log 如图 \ref{fig:wrong-cred}
+
+  \begin{figure}
+    \includegraphics[width=\textwidth]{sig.jpg}
+    \caption{代理服务器 Log}
+    \label{fig:wrong-cred}
+  \end{figure}
+
+  \appendix
+  \section{访问 Google 日志}
+  \label{result:google}
+
+  客户端的 Log 见图 \ref{fig:client-google}
+
+  \begin{figure}
+    \includegraphics[width=\textwidth]{client-log-google.jpg}
+    \caption{代理客户端 Log}
+    \label{fig:client-google}
+  \end{figure}
+
+  curl log 为：
+
+  \inputminted[]{text}{curl-log-google.txt}
+
+  \section{访问 Google 日志}
+  \label{result:google}
 \end{document}
