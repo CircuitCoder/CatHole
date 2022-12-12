@@ -1,4 +1,4 @@
-use std::{path::PathBuf, fs::File};
+use std::path::PathBuf;
 
 use elliptic_curve::pkcs8::{EncodePublicKey, LineEnding};
 use p256;

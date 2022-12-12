@@ -1,14 +1,12 @@
-use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr, Ipv6Addr, SocketAddrV6}, path::PathBuf, sync::Mutex, collections::HashMap, ffi::OsStr, str::FromStr};
-use chacha20poly1305::ChaCha20Poly1305;
-use proxy::{encrypted_send, encrypted_recv, setup_connection};
+use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr, Ipv6Addr, SocketAddrV6}, path::PathBuf, sync::Mutex, collections::{HashMap, HashSet}, ffi::OsStr, str::FromStr, borrow::Borrow};
+use proxy::{encrypted_send, encrypted_recv, setup_connection, Datagram, CtrlCode};
 use structopt::StructOpt;
-use tokio::{net::{TcpSocket, TcpStream, tcp::{OwnedWriteHalf, OwnedReadHalf}}, io::AsyncReadExt};
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::io::AsyncWriteExt;
+use tokio::io::AsyncReadExt;
 
 use p256::{ecdsa::signature::Signature};
 use p256::ecdsa::signature::Verifier;
-
-use uuid::Uuid;
 
 #[derive(StructOpt)]
 struct Args {
@@ -25,22 +23,14 @@ struct Args {
     users: PathBuf,
 }
 
-struct Connection {
-    client: Option<OwnedWriteHalf>,
-    external: OwnedWriteHalf,
-    reconn_token: [u8; 32],
-}
-
 struct ConnectionStore {
-    conns: HashMap<uuid::Uuid, Connection>,
-    reconn_map: HashMap<[u8; 32], uuid::Uuid>,
+    parked: HashMap<[u8; 32], TcpStream>,
 }
 
 impl ConnectionStore {
     fn new() -> Self {
         Self {
-            conns: HashMap::new(),
-            reconn_map: HashMap::new(),
+            parked: HashMap::new(),
         }
     }
 }
@@ -48,46 +38,12 @@ impl ConnectionStore {
 lazy_static::lazy_static! {
     static ref STORE: tokio::sync::Mutex<ConnectionStore> = tokio::sync::Mutex::new(ConnectionStore::new());
     static ref USERS: Mutex<HashMap<uuid::Uuid, p256::PublicKey>> = Mutex::new(HashMap::new());
+    static ref USED_NONCES: tokio::sync::Mutex<HashSet<[u8; 12]>> = tokio::sync::Mutex::new(HashSet::new());
 }
 
-async fn handle_external_read(mut external: OwnedReadHalf, id: Uuid, cipher: ChaCha20Poly1305) -> anyhow::Result<()> {
-    loop {
-        let mut buf = vec![0u8; 2048];
-        let len = external.read(&mut buf).await?;
-        let data = &buf[..len];
-
-        if data.len() == 0 {
-            continue;
-        }
-
-        let mut store_lock = STORE.lock().await;
-        let target = store_lock.conns.get_mut(&id);
-        if target.is_none() {
-            // Connection torn down
-            return Ok(())
-        }
-        let target = target.unwrap();
-        if target.client.is_none() {
-            continue;
-        }
-        let client = target.client.as_mut().unwrap();
-        encrypted_send(client, cipher.clone(), data, 0).await?;
-    }
-}
-
-async fn handle_client_read(mut client: OwnedReadHalf, id: Uuid, cipher: ChaCha20Poly1305) -> anyhow::Result<()> {
-    loop {
-        let buf = encrypted_recv(&mut client, cipher.clone()).await?;
-
-        let mut store_lock = STORE.lock().await;
-        let target = store_lock.conns.get_mut(&id);
-        if target.is_none() {
-            // Connection torn down
-            return Ok(())
-        }
-        let target = target.unwrap();
-        target.external.write_all(buf.as_slice()).await?;
-    }
+async fn filter(input: [u8; 12]) -> bool {
+    let mut locked = USED_NONCES.lock().await;
+    locked.insert(input)
 }
 
 async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Result<()> {
@@ -102,17 +58,23 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
     ) = setup_connection(client, sign_key).await?;
 
     log::debug!("Sending sig: {}", ecdhe_public_sig);
-    encrypted_send(&mut client_write, session_cipher.clone(), ecdhe_public_sig.as_bytes(), 0).await?;
-    let resp = encrypted_recv(&mut client_read, session_cipher.clone()).await?;
+    encrypted_send(&mut client_write, session_cipher.clone(), ecdhe_public_sig.as_bytes().into(), 0).await?;
+    let resp = match encrypted_recv(&mut client_read, session_cipher.clone(), filter).await? {
+        Datagram::Ctrl(c) => {
+            let code: u64 = c.into();
+            return Err(anyhow::anyhow!("Unexpected ctrl datagram at handshake: {}", code));
+        },
+        Datagram::Msg(m) => m,
+    };
 
     if resp.len() < 34 {
         return Err(anyhow::anyhow!("Invalid handshake length: {}", resp.len()));
     }
 
     let opcode = resp[0];
-    // TODO: handle reconnection
 
     let reconn_token = &resp[1..33];
+    let reconn_token: &[u8; 32] = reconn_token.try_into().unwrap();
     let addr_type = resp[33];
     let resp_rest = &resp[34..];
 
@@ -157,44 +119,55 @@ async fn handle_client(client: TcpStream, key: p256::SecretKey) -> anyhow::Resul
         verifier.verify(&ecdhe_remote_buffer, &sig)?;
     }
 
-    // Create internal id
     // TODO: support UDP
-    log::info!("Connecting upstream {}...", addr);
-    let external_socket = TcpStream::connect(addr).await?;
-    let (external_read, external_write) = external_socket.into_split();
-
-    let internal_id = uuid::Uuid::new_v4();
-    let mut store_lock = STORE.lock().await;
-    store_lock.reconn_map.insert(reconn_token.try_into().unwrap(), internal_id);
-    let conn = Connection {
-        client: Some(client_write),
-        external: external_write,
-        reconn_token: reconn_token.try_into().unwrap(),
+    let mut external = if opcode == 0 {
+        TcpStream::connect(addr).await?
+    } else {
+        let mut lock = STORE.lock().await;
+        match lock.parked.remove(reconn_token) {
+            Some(found) => found,
+            None => return Err(anyhow::anyhow!("Reconnect token {:?} not found", reconn_token)),
+        }
     };
 
-    store_lock.conns.insert(internal_id, conn);
-    log::info!("Handshake complete. Internal ID = {}", internal_id);
+    let mut external_buf = vec![0u8; 4096];
 
-    let external_read_cipher = session_cipher.clone();
-    let external_read_id = internal_id.clone();
-    tokio::spawn(async move {
-        let ret = handle_external_read(external_read, external_read_id, external_read_cipher).await;
-        if let Err(e) = ret {
-            log::error!("Error reading external socket {}", e);
-            // TODO: tear down connection
+    loop {
+        tokio::select! {
+            client_recv = encrypted_recv(&mut client_read, session_cipher.clone(), filter) => {
+                if client_recv.is_err() {
+                    let mut lock = STORE.lock().await;
+                    lock.parked.insert(reconn_token.clone(), external);
+                    break;
+                }
+                match client_recv.unwrap() {
+                    Datagram::Msg(m) => {
+                        external.write_all(m.borrow()).await?;
+                    },
+                    Datagram::Ctrl(c) => {
+                        let code: u64 = c.into();
+                        log::info!("Got ctrl: {}", code);
+                        match c {
+                            proxy::CtrlCode::Close => break,
+                        }
+                    },
+                }
+            },
+            external_recv_len = external.read(&mut external_buf) => {
+                let external_recv_len = external_recv_len?;
+                if external_recv_len == 0 {
+                    // Shutdown
+                    log::info!("External socket EOF, shutting down client conn");
+                    encrypted_send(&mut client_write, session_cipher.clone(), Datagram::Ctrl(CtrlCode::Close), 0).await?;
+                    break;
+                }
+                let external_recv = &external_buf[..external_recv_len];
+                encrypted_send(&mut client_write, session_cipher.clone(), external_recv.into(), 0).await?;
+            },
         }
-    });
+    }
 
-    let client_read_cipher = session_cipher.clone();
-    let client_read_id = internal_id.clone();
-    tokio::spawn(async move {
-        let ret = handle_client_read(client_read, client_read_id, client_read_cipher).await;
-        if let Err(e) = ret {
-            log::error!("Error reading client socket {}", e);
-            // TODO: tear down connection
-        }
-    });
-
+    log::info!("Connection terminated.");
     Ok(())
 }
 
@@ -205,6 +178,8 @@ async fn main(args: Args) -> anyhow::Result<()> {
 
     let key = std::fs::read_to_string(&args.key)?;
     let key = p256::SecretKey::from_sec1_pem(&key)?;
+
+    log::info!("Key loaded!");
 
     for entry in std::fs::read_dir(args.users)? {
         let entry = entry?;

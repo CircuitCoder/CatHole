@@ -7,9 +7,10 @@
 \usepackage{graphics}
 \usepackage{graphicx}
 \usepackage{todonotes}
+\usepackage{placeins}
 
 \title{网络安全工程与实现 HW4 设计文档}
-\author{刘晓义 2017011426, 任乐图}
+\author{刘晓义, 任乐图}
 
 \begin{document}
   \maketitle
@@ -91,7 +92,7 @@
   之后传递的任意消息都使用 Session key 加密，Cipher 使用 chacha20poly1305\footnote{流密码可以省去 Padding}，并可以认为是在 TCP 流之上的 Datagram 协议\footnote{使用 TCP 是为了方便保证 Datagram 大小没有限制，并且不用考虑重排}，具有以下格式：
 
   \begin{verbatim}
-| Length Nonce (12 bytes) | Length + Tag (uint32_t, 4 + 16 bytes) | Message Nonce (12 bytes) |  Message + Tag ... |
+| Length Nonce (12) | Length + Tag (u64, 8 + 16) | Message Nonce (12) |  Message + Tag ... |
   \end{verbatim}
 
   \begin{itemize}
@@ -112,7 +113,7 @@
     \item 客户端进行验证。如果验证通过，客户端发送以下结构：
 
     \begin{verbatim}
-| OpCode (1 byte) | Reconnect Token (32 bytes) | Addr | UID (16 bytes) | Sig | Garbage |
+| OpCode (1) | Reconnect Token (32) | Addr | UID (16) | Sig | Garbage |
     \end{verbatim}
 
     其中:
@@ -152,12 +153,33 @@
   一个简单的设计是单向握手，用户直接使用 PSK AEAD 加密自己的握手包，这样可以省去 Challenge 过程，直接使用 AEAD 进行用户验证。缺点是要不握手包共享 PSK，要不服务器需要对于所有用户的 PSK 依次尝试解码握手包。当用户量比较大的时候，可能成为被 DoS 的缺陷。
 
   \section{运行结果}
+  在 imool.com.cn 上，Web 服务器中运行 \texttt{python3 -m http.server 80} 启动一个简单的 HTTP 服务器。Client 直接访问是路由不过去的，但是在代理服务器上启动服务端，Client 启动客户端后，可以建立一个隧道，之后用浏览器和 curl 均可访问，见图 \ref{fig:client}。代理服务器和 Web 服务器日志见图 \ref{fig:server}, \ref{fig:web}。
 
-  将服务器放置在公网上，Log 见附录 \ref{result:google}。当给出错误的客户端密钥时，Log 如图 \ref{fig:wrong-cred}
+  \begin{figure}
+    \includegraphics[width=\textwidth]{client.jpg}
+    \caption{网页访问}
+    \label{fig:client}
+  \end{figure}
+
+  \begin{figure}
+    \includegraphics[width=\textwidth]{server.jpg}
+    \caption{代理服务器日志}
+    \label{fig:server}
+  \end{figure}
+
+  \begin{figure}
+    \includegraphics[width=\textwidth]{web.jpg}
+    \caption{Web 服务器日志}
+    \label{fig:web}
+  \end{figure}
+
+  当给出错误的客户端密钥时，Log 如图 \ref{fig:wrong-cred}。
+
+  将服务器放置在公网上可以访问 Google，Log 见附录 \ref{result:google}。
 
   \begin{figure}
     \includegraphics[width=\textwidth]{sig.jpg}
-    \caption{代理服务器 Log}
+    \caption{验证失败代理服务器 Log}
     \label{fig:wrong-cred}
   \end{figure}
 
@@ -175,8 +197,5 @@
 
   curl log 为：
 
-  \inputminted[]{text}{curl-log-google.txt}
-
-  \section{访问 Google 日志}
-  \label{result:google}
+  \inputminted[breaklines,breakanywhere]{text}{curl-log-google.txt}
 \end{document}

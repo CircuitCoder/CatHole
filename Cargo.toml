@@ -13,6 +13,7 @@ elliptic-curve = { version = "0.12.3", features = ["ecdh", "pkcs8", "pem", "std"
 env_logger = "0.10.0"
 lazy_static = "1.4.0"
 log = "0.4.17"
+num_enum = "0.5.7"
 p256 = { version = "0.11.1", features = ["pkcs8", "ecdh", "pem", "std"] }
 paw = "1.0.0"
 rand = "0.8.5"
